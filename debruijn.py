@@ -71,16 +71,17 @@ def read_fastq(fasta_file):
     cpt = 0
     with open(fasta_file, "r") as file:
         for line in file:
-            if cpt % 2 != 0:
-                sequence = line.strip('\n')
-                yield(sequence) 
+            sequence = line.strip('\n')
+            yield(sequence) 
             cpt += 1
+
 
 def cut_kmer(seq, k):
     kmer = ""
     for i in range(len(seq)+1-k):
         kmer = seq[i:i+k]
         yield(kmer)
+
 
 def build_kmer_dict(fasta_file, kmer):
     kmer_dict = dict()
@@ -95,35 +96,40 @@ def build_kmer_dict(fasta_file, kmer):
             kmer_dict[x] = 1
     return kmer_dict
 
+
 def build_graph(kmer_dict):
     graph = nx.DiGraph()
     for k in kmer_dict.keys():
-        prefixe = k[:-1]
-        suffixe = k[1:]
-        graph.add_edge(prefixe, suffixe, weight = kmer_dict[k])
+        predecessor = k[:-1]
+        successor = k[1:]
+        graph.add_edge(predecessor, successor, weight = kmer_dict[k])
     return graph
 
+
 def get_starting_nodes(graph):
-    entry_node = []
+    entry_nodes = []
     for i in graph.nodes():
-        if i not in graph.predecessors(i):
-            entry_node.append(i)
-    return entry_node 
+        if not graph.predecessors(i):
+            entry_nodes.append(i)
+    return entry_nodes 
 
 def get_sink_nodes(graph):
-    sink_node = []
+    sink_nodes = []
     for i in graph.nodes():
-        if i not in graph.successors(i):
-            sink_node.append(i)
-    return sink_node 
+        if not graph.successors(i):
+            sink_nodes.append(i)
+    return sink_nodes 
 
 def get_contigs(graph, start_nodes, end_nodes):
     contigs = []
     for start_node in start_nodes:
         for end_node in end_nodes:
             path = nx.shortest_path(graph, start_node, end_node)
+            contig += [node[0] for node in path[:-1]] + [path[-1]]
             contigs.append(path, len(path))
     return contigs
+
+
 
 def fill(text, width=80):
     """Split text with a line return to respect fasta format"""
@@ -132,28 +138,32 @@ def fill(text, width=80):
 def save_contigs(contig_list, output_file):
     with open(output_file, "w") as final_file:
         for contig in contig_list:
-            final_file.write(">contig_Numero{} len = {}".format(contig_list.index(),contig))
+            final_file.write(">contig_Numero{} len = {}".format(contig_list.index(contig),contig))
             final_file.write(fill(contig[0]))
 
 def std(list):
     return statistics.stdev(list)
+
 
 def path_average_weight(graph, path):
     av_w = 0
     for node in path:
         av_w += node["weight"]
     return av_w/(len(path)-1)
+    
+
+
 
 def remove_paths(graph, path_list, delete_entry_node, delete_sink_node):
     for path in path_list:
         if delete_entry_node == True and delete_sink_node == True:
             graph.remove_nodes_from(path)
         elif delete_entry_node == False and delete_sink_node == True:
-            graph.remove_nodes_from(path[:len(path)-1])
+            graph.remove_nodes_from(path[1:])
         elif delete_entry_node == False and delete_sink_node == False:
-            graph.remove_nodes_from(path[1:])    
+            graph.remove_nodes_from(path[1:len(path)-1])    
         else:
-            graph.remove_nodes_from(path[1:len(path)-1])
+            graph.remove_nodes_from(path[:len(path)-1])
     return graph
 
 
@@ -161,15 +171,15 @@ def select_best_path(graph, path_list, path_length, weight_average_list, delete_
     best_weight_av_indexes = []     
     for weight in weight_average_list:
         if weight == max(weight_average_list):
-            best_weight_av_indexes.append(weight.index())
+            best_weight_av_indexes.append(weight_average_list.index(weight))
     best_length_indexes = []
     for length in path_length:
-        if length.index() in best_weight_av_indexes:
-            best_length_indexes.append(length.index())
+        if path_length.index(length) in best_weight_av_indexes:
+            best_length_indexes.append(path_length.index(length))
     best_path_indexes = []
     for path in path_list:
-        if path.index() == max(best_length_indexes).index():
-            best_path_indexes.append(path.index())
+        if path_list.index(path) == max(best_length_indexes).index(path):
+            best_path_indexes.append(path_list.index(path))
     best_path_index = random.choice(best_path_indexes)
     graph.remove_paths(graph,path_list[:best_path_index] + path_list[best_path_index + 1:],delete_entry_node,delete_sink_node)
     return graph
@@ -184,7 +194,103 @@ def solve_bubble(graph, ancestor_node, descendant_node):
     graph.select_best_path(graph, path_list, path_lengths,avg_weight_list)
     return graph
 
-#def simplify_bubble(graph):
+def simplify_bubbles(graph):
+    starting_nodes = get_starting_nodes(graph)
+    sink_nodes = get_sink_nodes(graph)
+    successors = []
+    predecessors = []
+    for ancestor_node in starting_nodes:
+        for descendant_node in sink_nodes:
+            start_node = ancestor_node
+            end_node = descendant_node
+            successors.append(graph.successors(start_node))
+            predecessors.append(graph.predecessors(end_node))
+            while successors and len(successors)<2:
+                start_node = successors[0]
+                successors.clear()
+                successors.append(graph.successors(start_node))
+            while predecessors and len(predecessors)<2:
+                end_node = predecessors[0]
+                predecessors.clear()
+                predecessors.append(graph.predecessors(end_node))
+            if [nx.all_simple_paths(graph, start_node, end_node)]:
+                graph = solve_bubble(graph, start_node, end_node)
+    return graph
+
+def solve_entry_tips(graph, start_nodes):
+    graph = simplify_bubbles(graph)
+    entry_tips = []
+    tip = []
+    successors = []
+    predecessors = []
+    tip_lengths = []
+    avg_weight_list = []
+    for start_node in start_nodes:
+        node = start_node
+        successors. append(graph.successors(node))
+        predecessors.append(graph.predecessors(node))
+        while successors and len(successors)<2 and len(predecessors)<2:
+            node = successors[0]
+            tip.append(node)
+            successors.clear()
+            successors.append(graph.successors(node))
+            predecessors.clear()
+            predecessors.append(graph.predecessors(node))
+        entry_tips.append(tip)
+    for t in entry_tips:
+        tip_lengths.append(len(t))
+        avg_weight_list.append(path_average_weight(t))
+    return select_best_path(graph, entry_tips, tip_lengths, avg_weight_list, delete_entry_node = True)
+        
+
+
+def solve_out_tips(graph, end_nodes):
+    graph = simplify_bubbles(graph)
+    out_tips = []
+    tip = []
+    successors = []
+    predecessors = []
+    tip_lengths = []
+    avg_weight_list = []
+    for end_node in end_nodes:
+        node = end_node
+        successors. append(graph.successors(node))
+        predecessors.append(graph.predecessors(node))
+        while predecessors and len(successors)<2 and len(predecessors)<2:
+            node = predecessors[0]
+            tip.append(node)
+            successors.clear()
+            successors.append(graph.successors(node))
+            predecessors.clear()
+            predecessors.append(graph.predecessors(node))
+        out_tips.append(tip)
+    out_tips = out_tips.reverse()
+    for t in out_tips:
+        tip_lengths.append(len(t))
+        avg_weight_list.append(path_average_weight(t))
+    return select_best_path(graph, out_tips, tip_lengths, avg_weight_list, delete_sink_node = True)
+
+
+def draw_graph(graph, graphimg_file):
+    """Dessin du graphe
+    """                                    
+    fig, ax = plt.subplots()
+    elarge = [(u, v) for (u, v, d) in graph.edges(data=True) if d['weight'] > 3]
+    #print(elarge)
+    esmall = [(u, v) for (u, v, d) in graph.edges(data=True) if d['weight'] <= 3]
+    #print(elarge)
+    # Draw the graph with networkx
+    #pos=nx.spring_layout(graph)
+    pos = nx.random_layout(graph)
+    nx.draw_networkx_nodes(graph, pos, node_size=6)
+    nx.draw_networkx_edges(graph, pos, edgelist=elarge, width=6)
+    nx.draw_networkx_edges(graph, pos, edgelist=esmall, width=6, alpha=0.5, 
+                           edge_color='b', style='dashed')
+    #nx.draw_networkx(graph, pos, node_size=10, with_labels=False)
+    # save image
+    plt.savefig(graphimg_file)
+
+
 
 
 
@@ -209,19 +315,15 @@ def main():
     """
     # Get arguments
     args = get_arguments()
-    for line in read_fastq(args.fastq_file):
-        print(line)
-    print("\n")
-    print("kmer size: ", args.kmer_size)
-    print(build_kmer_dict(args.fastq_file, args.kmer_size))
-    #print("number of kmers : ", len(build_kmer_dict(args.fastq_file, args.kmer_size)))
-    #graph = build_graph(build_kmer_dict(args.fastq_file, args.kmer_size))
-    
+    file = read_fastq(args.fastq_file)
+    graph = build_graph(file, args.kmer_size)
+    graph = simplify_bubbles(graph)
+    start_nodes = get_starting_nodes(graph)
+    end_nodes = get_sink_nodes(graph)
+    graph.solve_entry_tips(graph,start_nodes)
+    graph.solve_out_tips(graph, end_nodes)
 
-    #starting_nodes = get_starting_nodes(graph)
-    #exit_nodes = get_sink_nodes(graph)
-    #print(starting_nodes)
-    #print(exit_nodes)
+    
 
 if __name__ == '__main__':
     main()
